@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PNG提示词提取器</title>
+    <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+    <style>
+        body { max-width: 800px; margin: 30px auto; font-family: Arial; }
+        #drop { border: 2px dashed #666; padding: 50px; text-align: center; margin: 20px 0; cursor: pointer; }
+        #drop.active { background: #e3f2fd; border-color: #2196f3; }
+        .result { margin-top: 20px; }
+        textarea { width: 100%; height: 200px; margin: 10px 0; padding: 10px; }
+    </style>
+</head>
+<body>
+    <h2>📸 上传PNG图片</h2>
+    <div id="drop">点击或拖拽图片到这里</div>
+    <input type="file" id="file" accept="image/png" style="display: none;">
+    
+    <div class="result">
+        <h3>🎨 纯提示词</h3>
+        <textarea id="prompt" readonly></textarea>
+        
+        <h3>🚫 负面提示词</h3>
+        <textarea id="neg" readonly></textarea>
+        
+        <h3>📋 原始元数据</h3>
+        <textarea id="raw" readonly></textarea>
+    </div>
+
+    <script>
+        // 核心元素
+        const drop = document.getElementById('drop');
+        const fileInput = document.getElementById('file');
+        const prompt = document.getElementById('prompt');
+        const neg = document.getElementById('neg');
+        const raw = document.getElementById('raw');
+
+        // 点击上传
+        drop.onclick = () => fileInput.click();
+
+        // 拖拽样式
+        drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('active'); }
+        drop.ondragleave = () => drop.classList.remove('active');
+
+        // 拖拽上传
+        drop.ondrop = (e) => {
+            e.preventDefault();
+            drop.classList.remove('active');
+            readFile(e.dataTransfer.files[0]);
+        }
+
+        // 选择文件
+        fileInput.onchange = (e) => readFile(e.target.files[0]);
+
+        // 读取文件（最稳定写法）
+        function readFile(file) {
+            if (!file || file.type !== 'image/png') {
+                alert('请上传PNG图片！');
+                return;
+            }
+
+            // 清空内容
+            prompt.value = '读取中...';
+            neg.value = '读取中...';
+            raw.value = '读取中...';
+
+            const reader = new FileReader();
+            reader.readAsArrayBuffer(file);
+            reader.onload = (e) => parsePNG(e.target.result);
+        }
+
+        // 解析PNG元数据
+        function parsePNG(buffer) {
+            try {
+                const bytes = new Uint8Array(buffer);
+                const view = new DataView(buffer);
+                const meta = {};
+                let offset = 8;
+
+                // 遍历所有数据块
+                while (offset < bytes.length) {
+                    const len = view.getUint32(offset);
+                    offset += 4;
+                    const type = String.fromCharCode(...bytes.slice(offset, offset+4));
+                    offset += 4;
+
+                    if (type === 'tEXt' || type === 'zTXt') {
+                        let idx = 0, key = '';
+                        while (bytes[offset + idx] !== 0) key += String.fromCharCode(bytes[offset + idx++]);
+                        idx++;
+
+                        try {
+                            let text;
+                            if (type === 'tEXt') text = new TextDecoder().decode(bytes.slice(offset+idx, offset+len));
+                            if (type === 'zTXt') text = new TextDecoder().decode(pako.inflate(bytes.slice(offset+idx+1, offset+len)));
+                            meta[key] = text;
+                        } catch (e) {}
+                    }
+                    offset += len + 4;
+                }
+
+                // 显示数据
+                raw.value = JSON.stringify(meta, null, 2);
+                
+                // 提取提示词
+                const txt = meta.parameters || meta.Prompt || '';
+                if (txt.includes('Negative prompt:')) {
+                    const [p, n] = txt.split('Negative prompt:');
+                    prompt.value = p.replace(/\n.*/gs, '').trim();
+                    neg.value = n.replace(/\n.*/gs, '').trim();
+                } else {
+                    prompt.value = txt.replace(/\n.*/gs, '').trim();
+                    neg.value = '未找到';
+                }
+
+            } catch (err) {
+                prompt.value = '解析失败';
+                neg.value = '解析失败';
+                raw.value = '错误：' + err.message;
+            }
+        }
+    </script>
+</body>
+</html>
